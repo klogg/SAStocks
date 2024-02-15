@@ -3,7 +3,7 @@ import pandas as pd
 from pandas.tseries.offsets import BDay
 import requests
 from datetime import datetime, timedelta
-import openai
+from openai import OpenAI
 from sqlite3 import dbapi2 as sqlite
 from retrying import retry
 import time
@@ -45,7 +45,9 @@ openai_key = keys_df['openai_key'].values[0]
 polygon_key = keys_df['polygon_key'].values[0]
 
 # OpenAI and Polygon.io API setup
-openai.api_key = openai_key
+client = OpenAI(
+    api_key = openai_key
+)
 polygon_url = "https://api.polygon.io/v1/meta/symbols/{ticker}/news?perpage=50&page=1&apiKey=" + polygon_key
 
 def load_tickers():
@@ -170,7 +172,7 @@ def gpt_sentiment_analysis(ticker, max_retries=4, retry_delay=2.0):
             for i in range(max_retries):
                 try:
                     prompt = f"As an analyst, assess the sentiment of the following information: {text}. Would you categorize it as 'Good', 'Bad', or 'Unknown' in the context of {ticker}?"
-                    response = openai.ChatCompletion.create(
+                    response = client.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=[
                             {"role": "system", "content": "You are an analyst whose task is to assess the sentiment of financial news."},
@@ -178,7 +180,7 @@ def gpt_sentiment_analysis(ticker, max_retries=4, retry_delay=2.0):
                         ],
                         max_tokens=300)
                         
-                    full_response = response['choices'][0]['message']['content'].strip()
+                    full_response = response.choices[0].message.content.strip()
                     sentiment = full_response.split('\n')[0].strip().upper()
 
                     if sentiment not in ['Good', 'Bad', 'Neutral']:
