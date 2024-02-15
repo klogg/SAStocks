@@ -39,10 +39,9 @@ logging.basicConfig(filename='app.log', filemode='w', format='%(name)s - %(level
 logging.info("This is an info message")
 logging.error("This is an error message")
 
-# Load API keys from CSV
-keys_df = pd.read_csv('api_keys.csv')
-openai_key = keys_df['openai_key'].values[0]
-polygon_key = keys_df['polygon_key'].values[0]
+# Load API keys from ENV
+openai_key = os.environ['OPENAI_API_KEY']
+polygon_key = os.environ['POLYGON_API_KEY']
 
 # OpenAI and Polygon.io API setup
 client = OpenAI(
