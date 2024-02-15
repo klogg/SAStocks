@@ -16,10 +16,12 @@ polygon_key = keys_df['polygon_key'].values[0]
 # Polygon.io API setup
 polygon_url = "https://api.polygon.io/v1/meta/symbols/{ticker}/news?perpage=50&page=1&apiKey=" + polygon_key
 
+
 def load_tickers():
     df = pd.read_csv('Tickers.csv')
     tickers = df.iloc[:, 2].tolist()
     return tickers
+
 
 # Database connection for news articles
 news_database_filename = 'news_articles.db'
@@ -42,10 +44,12 @@ news_connection.cursor().execute('''
     )
 ''')
 
+
 def save_news_to_db(date, ticker, title, description, article_url, author, keywords, publisher, image_url, amp_url):
     # Check if article already exists in the database
     cursor = news_connection.cursor()
-    cursor.execute("SELECT * FROM news_articles WHERE article_url = ?", (article_url,))
+    cursor.execute(
+        "SELECT * FROM news_articles WHERE article_url = ?", (article_url,))
     data = cursor.fetchone()
     if data is None:
         # Insert if not already present
@@ -54,13 +58,17 @@ def save_news_to_db(date, ticker, title, description, article_url, author, keywo
             (date, ticker, title, description, article_url, author, keywords, publisher, image_url, amp_url) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        cursor.execute(query, (date, ticker, title, description, article_url, author, keywords, publisher, image_url, amp_url))
+        cursor.execute(query, (date, ticker, title, description,
+                       article_url, author, keywords, publisher, image_url, amp_url))
         news_connection.commit()
     else:
         print(f"Article '{title}' already exists in database.")
+
+
 def process_api_response(api_response, ticker):
     if api_response.get('status') != "OK":
-        print(f"Error: {api_response.get('status')} - {api_response.get('error')}")
+        print(f"Error: {api_response.get('status')
+                        } - {api_response.get('error')}")
         return
     for result in api_response['results']:
         date = result['published_utc']
@@ -72,7 +80,8 @@ def process_api_response(api_response, ticker):
         publisher = result['publisher']['name']
         image_url = result['image_url']
         amp_url = result['amp_url']
-        save_news_to_db(date, ticker, title, description, article_url, author, keywords, publisher, image_url, amp_url)
+        save_news_to_db(date, ticker, title, description, article_url,
+                        author, keywords, publisher, image_url, amp_url)
 
 
 print("Starting news pull from 5/1/23")
