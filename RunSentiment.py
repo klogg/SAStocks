@@ -1,3 +1,7 @@
+# Copyright 2023 @NerdyBurner
+# Copyright 2024 Artem Mygaiev <joculator@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # Importing required tools
 import pandas as pd
 from pandas.tseries.offsets import BDay

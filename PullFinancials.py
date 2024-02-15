@@ -1,3 +1,7 @@
+# Copyright 2023 @NerdyBurner
+# Copyright 2024 Artem Mygaiev <joculator@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 import pandas as pd
 from datetime import datetime, timedelta
 from sqlite3 import dbapi2 as sqlite
