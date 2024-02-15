@@ -3,3 +3,5 @@
 *.db
 .venv
 .vscode
+report.txt
+state.pkl
