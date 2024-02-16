@@ -8,7 +8,7 @@ import os
 import pickle
 import time
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlite3 import dbapi2 as sqlite
 import requests
 import pandas as pd
@@ -37,14 +37,13 @@ def load_state():
         return state["processed_tickers"], state["report_data"]
     return [], []
 
+# Timestamp format
+DATE_FMT = '%Y-%m-%d'
+TIME_FMT = '%Y-%m-%d %H:%M:%S'
 
 # Configure logging
 logging.basicConfig(filename='app.log', filemode='w',
                     format='%(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-# Replace print statements with logging statements
-logging.info("This is an info message")
-logging.error("This is an error message")
 
 # Load API keys from ENV
 openai_key = os.environ['OPENAI_API_KEY']
@@ -54,7 +53,8 @@ polygon_key = os.environ['POLYGON_API_KEY']
 client = OpenAI(
     api_key=openai_key
 )
-polygon_url = "https://api.polygon.io/v1/meta/symbols/{ticker}/news?perpage=50&page=1&apiKey=" + polygon_key
+polygon_url = "https://api.polygon.io/v1/meta/symbols/{ticker}/news?perpage=50&page=1&apiKey=" + \
+    polygon_key
 
 
 def load_tickers():
@@ -89,9 +89,9 @@ connection = sqlite.connect(DATABASE_FILENAME)
 
 connection.cursor().execute('''
     CREATE TABLE IF NOT EXISTS sentiment_scores
-    (date text, ticker text, vader_sentiment text, gpt_sentiment text, gpt_response text,
-        historical_price_high real, historical_price_low real, historical_price_avg real, aggregated_score real,
-        recent_price real, rsi real, macd real)
+    (date text, ticker text, vader_sentiment text, gpt_sentiment text,
+        historical_price_high real, historical_price_low real,
+        aggregated_score real, recent_price real, rsi real, macd real)
 ''')
 
 # Vader Sentiment Analyzer
@@ -103,7 +103,7 @@ def get_latest_date_in_db():
     cursor.execute("SELECT MAX(date) FROM sentiment_scores")
     result = cursor.fetchone()
     if result[0] is not None:
-        return datetime.strptime(result[0], '%Y-%m-%d').date()
+        return datetime.strptime(result[0], DATE_FMT).date()
     return None
 
 
@@ -116,27 +116,21 @@ def requests_get_with_retry(url):
 
 def get_stock_news(ticker):
     try:
-        url = f"https://api.polygon.io/v2/reference/news?ticker={
-            ticker}&apiKey={polygon_key}"
+        url = f"https://api.polygon.io/v2/reference/news?ticker={ticker}&apiKey={polygon_key}"
         response = requests.get(url, timeout = 10)
         data = response.json()
 
         if 'status' in data and data['status'] == "OK":
             for result in data['results']:
-                timestamp = result.get(
-                    'timestamp', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                save_news_to_db(timestamp, ticker, result.get(
-                    'title', ''), result.get('description', ''))
+                timestamp = result.get('timestamp', datetime.now().strftime(TIME_FMT))
+                save_news_to_db(timestamp, ticker, result.get('title', ''), 
+                                result.get('description', ''))
             return data['results']
 
         return []
     except requests.exceptions.RequestException as e:
         print(f"Error getting stock news for {ticker}: {e}")
         return []
-
-
-# Initialize a global dictionary to hold all articles
-all_ticker_articles = {}
 
 
 def add_article_to_tickers(article, ticker_articles):
@@ -171,48 +165,55 @@ def get_news_from_db(ticker):
 def vader_sentiment_analysis(ticker):
     news_articles = get_news_from_db(ticker)
     sentiment_scores = []
-    for title, description in news_articles:
+    labels = ['Very bad', 'Bad', 'Neutral', 'Good', 'Very good']
+    idx = pd.IntervalIndex.from_breaks([-1, -0.8, -0.35, 0.35, 0.8, 1], closed='left')
+    for date, title, description in news_articles:
         if title and description:
             text = title + " " + description
             sentiment_score = analyzer.polarity_scores(text)
-            compound_score = sentiment_score['compound']
-            if compound_score >= 0.05:
-                sentiment_scores.append("Good")
-            elif compound_score <= -0.05:
-                sentiment_scores.append("Bad")
-            else:
-                sentiment_scores.append("Neutral")
+            sentiment_scores.append(labels[idx.get_loc(sentiment_score['compound'])])
     return sentiment_scores
 
 
 def gpt_sentiment_analysis(ticker, max_retries=4, retry_delay=2.0):
     news_articles = get_news_from_db(ticker)
     sentiment_scores = []
-    for title, description in news_articles:
+    for date, title, description in news_articles:
         if title and description:
             text = title + " " + description
-            for i in range(max_retries):
+            while max_retries > 0:
                 try:
-                    prompt = f"As an analyst, assess the sentiment of the following information: {
-                        text}. Would you categorize it as 'Good', 'Bad', or 'Unknown' in the context of {ticker}?"
+                    max_retries -= 1
+
+                    prompt = "As an analyst, assess the sentiment of the following information: "\
+                        f"{text}. Would you categorize it as 'Very good', 'Good', 'Neutral', "\
+                        f"'Bad' or 'Very bad' in the context of {ticker}? Please limit your "\
+                        "answer to 10 words."
+
+                    logging.info("GPT prompt: %s", prompt)
+
                     response = client.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=[
-                            {"role": "system", "content": "You are an analyst whose task is to assess the sentiment of financial news."},
+                            {"role": "system", "content": "You are an analyst whose task is to "\
+                                "assess the sentiment of financial news."},
                             {"role": "user", "content": prompt},
                         ],
                         max_tokens=300)
 
                     full_response = response.choices[0].message.content.strip()
-                    sentiment = full_response.split('\n')[0].strip().upper()
+                    sentiment = full_response.split('\n')[0].strip()
 
-                    if sentiment not in ['Good', 'Bad', 'Neutral']:
+                    logging.info("GPT response: %s", full_response)
+
+                    if sentiment not in ['Very good', 'Good', 'Neutral', 'Bad', 'Very bad']:
                         sentiment = 'UNKNOWN'
 
                     sentiment_scores.append(sentiment)
+                    break
                 except Exception as e:
                     print(f"Error during GPT sentiment analysis: {e}")
-                    if i < max_retries - 1:  # if not the last retry attempt
+                    if max_retries > 0: # if not the last retry attempt
                         time.sleep(retry_delay)  # wait before next retry
                     else:
                         # return Error after all retry attempts failed
@@ -221,30 +222,26 @@ def gpt_sentiment_analysis(ticker, max_retries=4, retry_delay=2.0):
 
 
 def get_rsi(ticker, key):
-    rsi_url = f"https://api.polygon.io/v1/indicators/rsi/{
-        ticker}?apiKey={key}"
+    rsi_url = f"https://api.polygon.io/v1/indicators/rsi/{ticker}?apiKey={key}"
     rsi_response = requests_get_with_retry(rsi_url)
     if rsi_response.status_code == 200:
         rsi_data = rsi_response.json()['results']['values']
         # Return the most recent value
         return rsi_data[0]['value'] if rsi_data else None
-    
-    print(f"Error in get_rsi() for ticker {
-            ticker}: {rsi_response.status_code}")
+
+    print(f"Error in get_rsi() for ticker {ticker}: {rsi_response.status_code}")
     return None
 
 
 def get_macd(ticker, key):
-    macd_url = f"https://api.polygon.io/v1/indicators/macd/{
-        ticker}?apiKey={key}"
+    macd_url = f"https://api.polygon.io/v1/indicators/macd/{ticker}?apiKey={key}"
     macd_response = requests_get_with_retry(macd_url)
     if macd_response.status_code == 200:
         macd_data = macd_response.json()['results']['values']
         # Return the most recent value
         return macd_data[0]['value'] if macd_data else None
 
-    print(f"Error in get_macd() for ticker {
-            ticker}: {macd_response.status_code}")
+    print(f"Error in get_macd() for ticker {ticker}: {macd_response.status_code}")
     return None
 
 
@@ -252,8 +249,8 @@ def get_historical_price(ticker):
     end_date = datetime.now()
     start_date = end_date - timedelta(days=7)
     response = requests_get_with_retry(
-        f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date.strftime(
-            '%Y-%m-%d')}/{end_date.strftime('%Y-%m-%d')}?apiKey={polygon_key}"
+        f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/" \
+        f"{start_date.strftime(DATE_FMT)}/{end_date.strftime(DATE_FMT)}?apiKey={polygon_key}"
     )
     data = response.json()["results"]
     prices = [item["c"] for item in data]  # closing prices
@@ -265,9 +262,11 @@ def get_historical_price(ticker):
 
 def get_recent_price(ticker):
     # Get the most recent business day
-    current_date = (datetime.now() - BDay(1)).strftime("%Y-%m-%d")
-    response = requests_get_with_retry(f"https://api.polygon.io/v1/open-close/{
-                                       ticker}/{current_date}?adjusted=true&apiKey={polygon_key}")
+    current_date = (datetime.now() - BDay(1)).strftime(DATE_FMT)
+    response = requests_get_with_retry(
+        "https://api.polygon.io/v1/open-close/"\
+        f"{ticker}/{current_date}?adjusted=true&apiKey={polygon_key}"
+    )
     data = response.json() if response else None
     if data and 'close' in data:
         recent_price = data['close']
@@ -276,7 +275,8 @@ def get_recent_price(ticker):
     return recent_price
 
 
-def calculate_aggregated_score(vader_total, gpt_total, historical_price_low, historical_price_high, recent_price, news_volume, rsi, macd, num_articles):
+def calculate_aggregated_score(vader_total, gpt_total, historical_price_low, historical_price_high,
+                               recent_price, news_volume, rsi, macd, num_articles):
     vader_score = vader_total / num_articles
     gpt_score = gpt_total / num_articles
 
@@ -310,14 +310,21 @@ def calculate_aggregated_score(vader_total, gpt_total, historical_price_low, his
     return aggregated_score
 
 
-def save_to_db(date, ticker, vader_sentiment, gpt_sentiment, gpt_response, historical_price_high, historical_price_low, historical_price_avg, aggregated_score, recent_price, rsi, macd):
+def save_to_db(ticker, vader_sentiment, gpt_sentiment,
+               historical_price_high, historical_price_low,
+               aggregated_score, recent_price, rsi, macd):
     query = """
         INSERT INTO sentiment_scores 
-        (date, ticker, vader_sentiment, gpt_sentiment, gpt_response, historical_price_high, historical_price_low, historical_price_avg, aggregated_score, recent_price, rsi, macd) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (date, ticker, vader_sentiment, gpt_sentiment, historical_price_high, 
+            historical_price_low, aggregated_score, recent_price, rsi, macd)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
-    connection.cursor().execute(query, (date, ticker, vader_sentiment, gpt_sentiment, gpt_response,
-                                        historical_price_high, historical_price_low, historical_price_avg, aggregated_score, recent_price, rsi, macd))
+    date = datetime.now(timezone.utc).strftime(DATE_FMT)
+
+    connection.cursor().execute(query, (
+        date, ticker, vader_sentiment, gpt_sentiment,
+        historical_price_high, historical_price_low,
+        aggregated_score, recent_price, rsi, macd))
     connection.commit()  # commit right after inserting data for a ticker
 
 
@@ -334,8 +341,9 @@ def print_report(report_data):
 
 
 def main():
-    sentiment_scores = {"Good": 1, "Neutral": 0,
-                        "UNKNOWN": 0, "ERROR": 0, "Error": 0, "Bad": -1}
+    sentiment_scores = {"Very good": 1, "Good": 0.5,
+                        "Neutral": 0, "UNKNOWN": 0, "ERROR": 0, "Error": 0,
+                        "Bad": -0.5, "Very bad": -1}
 
     try:
         # Load state
@@ -370,10 +378,7 @@ def main():
                 continue  # Skip tickers that have been processed already
             print(f"\nImporting news for ticker #{i}: {ticker}")
             news = get_stock_news(ticker)
-            print(f"Loaded and saved {len(news)} news articles for {
-                  ticker} in the database.")
-            print(f"Finished importing and filtering news. Total articles: {
-                  len(all_ticker_articles)}")
+            print(f"Loaded and saved {len(news)} news articles for {ticker} in the database.")
 
             # Save the news articles for this ticker
             news_data[ticker] = news
@@ -411,13 +416,17 @@ def main():
 
             # Calculate scores and save to database
             historical_price_high, historical_price_low = get_historical_price(ticker)
+
             # Now that all articles have been processed, calculate the aggregated score
-            vader_total = sum([sentiment_scores[sentiment]
-                              for sentiment in vader_sentiments])
-            gpt_total = sum([sentiment_scores[sentiment]
-                            for sentiment in gpt_sentiments])
+            vader_total = sum([sentiment_scores[sentiment] for sentiment in vader_sentiments])
+            gpt_total = sum([sentiment_scores[sentiment] for sentiment in gpt_sentiments])
             aggregated_score = calculate_aggregated_score(
-                vader_total, gpt_total, historical_price_low, historical_price_high, recent_price, len(news), rsi, macd, len(vader_sentiments))
+                vader_total, gpt_total, historical_price_low, historical_price_high, recent_price,
+                len(news), rsi, macd, len(vader_sentiments))
+
+            save_to_db(ticker, vader_total, gpt_total,
+               historical_price_high, historical_price_low,
+               aggregated_score, recent_price, rsi, macd)
 
             # Print calculated final scoring
             print(f"Aggregated Score for {ticker}: {aggregated_score}")
@@ -427,7 +436,8 @@ def main():
 
             print(f"Finished Processing Ticker #{i}: {ticker}")
 
-            # After processing each ticker, add it to the list of processed tickers and save the state
+            # After processing each ticker, add it to the list of processed tickers
+            # and save the state
             processed_tickers.append(ticker)
             state = {"processed_tickers": processed_tickers,
                      "report_data": report_data}
