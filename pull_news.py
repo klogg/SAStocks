@@ -2,12 +2,9 @@
 # Copyright 2024 Artem Mygaiev <joculator@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-# Get required components
-import pandas as pd
-from pandas.tseries.offsets import BDay
-import requests
-from datetime import datetime, timedelta
 from sqlite3 import dbapi2 as sqlite
+import pandas as pd
+import requests
 
 # Load API keys from CSV
 keys_df = pd.read_csv('api_keys.csv')
@@ -24,8 +21,8 @@ def load_tickers():
 
 
 # Database connection for news articles
-news_database_filename = 'news_articles.db'
-news_connection = sqlite.connect(news_database_filename)
+NEWS_DATABASE_FILENAME = 'news_articles.db'
+news_connection = sqlite.connect(NEWS_DATABASE_FILENAME)
 
 # Extend table schema to accommodate more details
 news_connection.cursor().execute('''
@@ -84,30 +81,33 @@ def process_api_response(api_response, ticker):
                         author, keywords, publisher, image_url, amp_url)
 
 
-print("Starting news pull from 5/1/23")
+def main():
+    # Load the tickers
+    tickers = load_tickers()
 
-# Load the tickers
-tickers = load_tickers()
+    # Download news articles for all tickers
+    print("Importing and Filtering News from Polygon.io for all tickers")
+    processed_tickers = []  # You might have this defined somewhere else
+    for i, ticker in enumerate(tickers, start=1):
+        if ticker in processed_tickers:
+            continue  # Skip tickers that have been processed already
+        print(f"\nImporting news for ticker #{i}: {ticker}")
 
-# Download news articles for all tickers
-print("Importing and Filtering News from Polygon.io for all tickers")
-processed_tickers = []  # You might have this defined somewhere else
-for i, ticker in enumerate(tickers, start=1):
-    if ticker in processed_tickers:
-        continue  # Skip tickers that have been processed already
-    print(f"\nImporting news for ticker #{i}: {ticker}")
+        # Execute the request, get the response and process it
+        try:
+            api_response = requests.get(polygon_url.format(ticker = ticker), timeout = 10).json()
+            process_api_response(api_response, ticker)
+        except requests.exceptions.RequestException as e:
+            print(f"An error occurred while processing {ticker}: {e}")
+            continue
 
-    # Execute the request, get the response and process it
-    try:
-        api_response = requests.get(polygon_url.format(ticker=ticker)).json()
-        process_api_response(api_response, ticker)
-    except Exception as e:
-        print(f"An error occurred while processing {ticker}: {e}")
-        continue
+        print(f"Finished importing and filtering news for {ticker}")
 
-    print(f"Finished importing and filtering news for {ticker}")
+    print("News Capture Completed - Database Prepared")
 
-print("News Capture Completed - Database Prepared")
+    # Close the database connection when you're done
+    news_connection.close()
 
-# Close the database connection when you're done
-news_connection.close()
+
+if __name__ == "__main__":
+    main()

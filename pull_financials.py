@@ -2,9 +2,9 @@
 # Copyright 2024 Artem Mygaiev <joculator@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-import pandas as pd
 from datetime import datetime, timedelta
 from sqlite3 import dbapi2 as sqlite
+import pandas as pd
 from retrying import retry
 import requests
 from pandas.tseries.offsets import BDay
@@ -14,8 +14,8 @@ keys_df = pd.read_csv('api_keys.csv')
 polygon_key = keys_df['polygon_key'].values[0]
 
 # Database connection for sentiment scores
-database_filename = 'sentiment_scores.db'
-connection = sqlite.connect(database_filename)
+DATABASE_FILENAME = 'sentiment_scores.db'
+connection = sqlite.connect(DATABASE_FILENAME)
 
 connection.cursor().execute('''
     CREATE TABLE IF NOT EXISTS sentiment_scores
@@ -27,7 +27,7 @@ connection.cursor().execute('''
 
 @retry(stop_max_attempt_number=7, wait_exponential_multiplier=1000, wait_exponential_max=10000)
 def requests_get_with_retry(url):
-    response = requests.get(url)
+    response = requests.get(url, timeout=10)
     response.raise_for_status()  # Raises stored HTTPError, if one occurred
     return response
 

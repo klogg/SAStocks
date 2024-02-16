@@ -6,16 +6,14 @@
 import logging
 import os
 import pickle
-import pandas as pd
-from pandas.tseries.offsets import BDay
-import requests
-from datetime import datetime, timedelta
-from openai import OpenAI
-from sqlite3 import dbapi2 as sqlite
-from retrying import retry
 import time
-from datetime import datetime
 import traceback
+from datetime import datetime
+from sqlite3 import dbapi2 as sqlite
+import requests
+import pandas as pd
+from openai import OpenAI
+from retrying import retry
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 nltk.download('punkt')
@@ -101,7 +99,7 @@ def get_latest_date_in_db():
 
 @retry(stop_max_attempt_number=7, wait_exponential_multiplier=1000, wait_exponential_max=10000)
 def requests_get_with_retry(url):
-    response = requests.get(url)
+    response = requests.get(url, timeout = 10)
     response.raise_for_status()  # Raises stored HTTPError, if one occurred
     return response
 
@@ -125,7 +123,7 @@ def fetch_financial_data(ticker):
 def vader_sentiment_analysis(ticker):
     news_articles = get_news_from_db(ticker)
     sentiment_scores = []
-    for date, title, description in news_articles:
+    for title, description in news_articles:
         if title and description:
             text = title + " " + description
             sentiment_score = analyzer.polarity_scores(text)
@@ -142,7 +140,7 @@ def vader_sentiment_analysis(ticker):
 def gpt_sentiment_analysis(ticker, max_retries=4, retry_delay=2.0):
     news_articles = get_news_from_db(ticker)
     sentiment_scores = []
-    for date, title, description in news_articles:
+    for title, description in news_articles:
         if title and description:
             text = title + " " + description
             for i in range(max_retries):
@@ -224,7 +222,7 @@ def print_report(report_data):
     for ticker, score in report_data:
         print(f"{ticker}: {score}")
     # Write the report to a file
-    with open('report.txt', 'w') as f:
+    with open('report.txt', 'w', encoding="utf-8") as f:
         f.write("Report:\n")
         for ticker, score in report_data:
             f.write(f"{ticker}: {score}\n")
@@ -247,7 +245,7 @@ def main():
             report_data = []
 
         # Load tickers
-        print("Starting Analysis - Reading Tickers.csv")
+        print("Starting Analysis - Reading tickers.csv")
         tickers = load_tickers()
         print(f"Loaded {len(tickers)} tickers.")
         if not tickers:
@@ -280,8 +278,10 @@ def main():
                               for sentiment in vader_sentiments])
             gpt_total = sum([sentiment_scores[sentiment]
                             for sentiment in gpt_sentiments])
+            
+            news_articles = get_news_from_db(ticker)
             aggregated_score = calculate_aggregated_score(
-                vader_total, gpt_total, historical_price_low, historical_price_high, recent_price, rsi, macd, len(vader_sentiments))
+                vader_total, gpt_total, historical_price_low, historical_price_high, recent_price, len(news_articles), rsi, macd, len(vader_sentiments))
 
             # Print calculated final scoring
             print(f"Aggregated Score for {ticker}: {aggregated_score}")
