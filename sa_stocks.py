@@ -6,16 +6,15 @@
 import logging
 import os
 import pickle
-import pandas as pd
-from pandas.tseries.offsets import BDay
-import requests
-from datetime import datetime, timedelta
-from openai import OpenAI
-from sqlite3 import dbapi2 as sqlite
-from retrying import retry
 import time
-from datetime import datetime
 import traceback
+from datetime import datetime, timedelta
+from sqlite3 import dbapi2 as sqlite
+import requests
+import pandas as pd
+from openai import OpenAI
+from retrying import retry
+from pandas.tseries.offsets import BDay
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 nltk.download('punkt')
@@ -36,8 +35,7 @@ def load_state():
         with open("state.pkl", "rb") as f:
             state = pickle.load(f)
         return state["processed_tickers"], state["report_data"]
-    else:
-        return [], []
+    return [], []
 
 
 # Configure logging
@@ -66,8 +64,8 @@ def load_tickers():
 
 
 # Database connection for news articles
-news_database_filename = 'news_articles.db'
-news_connection = sqlite.connect(news_database_filename)
+NEWS_DATABASE_FILENAME = 'news_articles.db'
+news_connection = sqlite.connect(NEWS_DATABASE_FILENAME)
 
 news_connection.cursor().execute('''
     CREATE TABLE IF NOT EXISTS news_articles
@@ -86,8 +84,8 @@ def save_news_to_db(date, ticker, title, description):
 
 
 # Database connection
-database_filename = 'sentiment_scores.db'
-connection = sqlite.connect(database_filename)
+DATABASE_FILENAME = 'sentiment_scores.db'
+connection = sqlite.connect(DATABASE_FILENAME)
 
 connection.cursor().execute('''
     CREATE TABLE IF NOT EXISTS sentiment_scores
@@ -106,13 +104,12 @@ def get_latest_date_in_db():
     result = cursor.fetchone()
     if result[0] is not None:
         return datetime.strptime(result[0], '%Y-%m-%d').date()
-    else:
-        return None
+    return None
 
 
 @retry(stop_max_attempt_number=7, wait_exponential_multiplier=1000, wait_exponential_max=10000)
 def requests_get_with_retry(url):
-    response = requests.get(url)
+    response = requests.get(url, timeout = 10)
     response.raise_for_status()  # Raises stored HTTPError, if one occurred
     return response
 
@@ -121,7 +118,7 @@ def get_stock_news(ticker):
     try:
         url = f"https://api.polygon.io/v2/reference/news?ticker={
             ticker}&apiKey={polygon_key}"
-        response = requests.get(url)
+        response = requests.get(url, timeout = 10)
         data = response.json()
 
         if 'status' in data and data['status'] == "OK":
@@ -131,15 +128,14 @@ def get_stock_news(ticker):
                 save_news_to_db(timestamp, ticker, result.get(
                     'title', ''), result.get('description', ''))
             return data['results']
-        else:
-            return []
-    except Exception as e:
+        return []
+    except requests.exceptions.RequestException as e:
         print(f"Error getting stock news for {ticker}: {e}")
         return []
 
 
 # Initialize a global dictionary to hold all articles
-ticker_articles = {}
+all_ticker_articles = {}
 
 
 def add_article_to_tickers(article, ticker_articles):
@@ -174,7 +170,7 @@ def get_news_from_db(ticker):
 def vader_sentiment_analysis(ticker):
     news_articles = get_news_from_db(ticker)
     sentiment_scores = []
-    for date, title, description in news_articles:
+    for title, description in news_articles:
         if title and description:
             text = title + " " + description
             sentiment_score = analyzer.polarity_scores(text)
@@ -191,7 +187,7 @@ def vader_sentiment_analysis(ticker):
 def gpt_sentiment_analysis(ticker, max_retries=4, retry_delay=2.0):
     news_articles = get_news_from_db(ticker)
     sentiment_scores = []
-    for date, title, description in news_articles:
+    for title, description in news_articles:
         if title and description:
             text = title + " " + description
             for i in range(max_retries):
@@ -223,32 +219,32 @@ def gpt_sentiment_analysis(ticker, max_retries=4, retry_delay=2.0):
     return sentiment_scores
 
 
-def get_rsi(ticker, polygon_key):
+def get_rsi(ticker, key):
     rsi_url = f"https://api.polygon.io/v1/indicators/rsi/{
-        ticker}?apiKey={polygon_key}"
+        ticker}?apiKey={key}"
     rsi_response = requests_get_with_retry(rsi_url)
     if rsi_response.status_code == 200:
         rsi_data = rsi_response.json()['results']['values']
         # Return the most recent value
         return rsi_data[0]['value'] if rsi_data else None
-    else:
-        print(f"Error in get_rsi() for ticker {
-              ticker}: {rsi_response.status_code}")
-        return None
+    
+    print(f"Error in get_rsi() for ticker {
+            ticker}: {rsi_response.status_code}")
+    return None
 
 
-def get_macd(ticker, polygon_key):
+def get_macd(ticker, key):
     macd_url = f"https://api.polygon.io/v1/indicators/macd/{
-        ticker}?apiKey={polygon_key}"
+        ticker}?apiKey={key}"
     macd_response = requests_get_with_retry(macd_url)
     if macd_response.status_code == 200:
         macd_data = macd_response.json()['results']['values']
         # Return the most recent value
         return macd_data[0]['value'] if macd_data else None
-    else:
-        print(f"Error in get_macd() for ticker {
-              ticker}: {macd_response.status_code}")
-        return None
+
+    print(f"Error in get_macd() for ticker {
+            ticker}: {macd_response.status_code}")
+    return None
 
 
 def get_historical_price(ticker):
@@ -261,9 +257,9 @@ def get_historical_price(ticker):
     data = response.json()["results"]
     prices = [item["c"] for item in data]  # closing prices
     if prices:
-        return max(prices), min(prices), sum(prices) / len(prices)
-    else:
-        return None, None, None
+        return max(prices), min(prices)
+
+    return None, None
 
 
 def get_recent_price(ticker):
@@ -329,7 +325,7 @@ def print_report(report_data):
     for ticker, score in report_data:
         print(f"{ticker}: {score}")
     # Write the report to a file
-    with open('report.txt', 'w') as f:
+    with open('report.txt', 'w', encoding="utf-8") as f:
         f.write("Report:\n")
         for ticker, score in report_data:
             f.write(f"{ticker}: {score}\n")
@@ -376,7 +372,7 @@ def main():
             print(f"Loaded and saved {len(news)} news articles for {
                   ticker} in the database.")
             print(f"Finished importing and filtering news. Total articles: {
-                  len(ticker_articles)}")
+                  len(all_ticker_articles)}")
 
             # Save the news articles for this ticker
             news_data[ticker] = news
@@ -413,8 +409,7 @@ def main():
             recent_price = get_recent_price(ticker)
 
             # Calculate scores and save to database
-            historical_price_high, historical_price_low, historical_price_avg = get_historical_price(
-                ticker)
+            historical_price_high, historical_price_low = get_historical_price(ticker)
             # Now that all articles have been processed, calculate the aggregated score
             vader_total = sum([sentiment_scores[sentiment]
                               for sentiment in vader_sentiments])
