@@ -278,7 +278,7 @@ def main():
                               for sentiment in vader_sentiments])
             gpt_total = sum([sentiment_scores[sentiment]
                             for sentiment in gpt_sentiments])
-
+            
             news_articles = get_news_from_db(ticker)
             aggregated_score = calculate_aggregated_score(
                 vader_total, gpt_total, historical_price_low, historical_price_high, recent_price, len(news_articles), rsi, macd, len(vader_sentiments))

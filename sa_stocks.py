@@ -128,6 +128,7 @@ def get_stock_news(ticker):
                 save_news_to_db(timestamp, ticker, result.get(
                     'title', ''), result.get('description', ''))
             return data['results']
+
         return []
     except requests.exceptions.RequestException as e:
         print(f"Error getting stock news for {ticker}: {e}")
